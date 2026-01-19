@@ -12,28 +12,8 @@ const ZAI_VOICES = [
 ]
 
 // OpenAI-compatible American voices (if user has TTS service running on localhost:5173)
-const OPENAI_VOICES = [
-  { id: 'af_heart', name: 'Heart (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'af_nicole', name: 'Nicole (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'af_sky', name: 'Sky (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'af_bella', name: 'Bella (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'af_nova', name: 'Nova (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'am_adam', name: 'Adam (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'am_echo', name: 'Echo (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'am_eric', name: 'Eric (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'am_michael', name: 'Michael (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'am_liam', name: 'Liam (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'bf_emma', name: 'Emma (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'bf_isabella', name: 'Isabella (American Female)', gender: 'female', language: 'en', type: 'openai' },
-  { id: 'bf_george', name: 'George (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'bf_lewis', name: 'Lewis (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'bm_daniel', name: 'Daniel (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'bm_george', name: 'George (American Male)', gender: 'male', language: 'en', type: 'openai' },
-  { id: 'bm_lewis', name: 'Lewis (American Male)', gender: 'male', language: 'en', type: 'openai' },
-]
-
 // Combine both voice lists
-const AVAILABLE_VOICES = [...ZAI_VOICES, ...OPENAI_VOICES]
+const AVAILABLE_VOICES = [...ZAI_VOICES]
 
 export async function GET() {
   try {
