@@ -43,17 +43,21 @@ export async function POST(req: NextRequest) {
 
     if (isOpenAIVoice) {
       // Use OpenAI-compatible TTS service (for American voices)
-      // Only try OpenAI service if it's explicitly an OpenAI voice
       try {
+        const apiKey = process.env.OPENAI_API_KEY
+
+        if (!apiKey) {
+          throw new Error('OPENAI_API_KEY is not defined')
+        }
+
         const openai = new OpenAI({
-          baseURL: 'http://localhost:5173/api/v1',
-          apiKey: 'no-key',
-          timeout: 5000, // 5 second timeout
+          apiKey: apiKey,
+          timeout: 10000,
         })
 
         const mp3 = await openai.audio.speech.create({
-          model: 'model_q8f16',
-          voice: voice,
+          model: 'tts-1', // Standard OpenAI TTS model
+          voice: voice as any,
           input: textToSpeak,
         })
 
@@ -69,12 +73,13 @@ export async function POST(req: NextRequest) {
           },
         })
       } catch (error) {
-        // OpenAI service not available or timeout, return error immediately
-        console.error('OpenAI TTS service unavailable:', error.message)
+        console.error('OpenAI TTS service error:', error instanceof Error ? error.message : error)
+        // Fallback to ZAI voice if OpenAI fails? Or just return error?
+        // Returning error is safer for now to alert user of missing config.
         return NextResponse.json(
-          { 
-            error: 'American voice requires TTS service at localhost:5173. Using z-ai voices instead.',
-            fallbackVoice: 'kazi' 
+          {
+            error: 'Failed to generate American voice. Please check OPENAI_API_KEY.',
+            details: error instanceof Error ? error.message : 'Unknown error'
           },
           { status: 500 }
         )
