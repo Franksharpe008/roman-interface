@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Mic, MicOff, Send, Volume2, VolumeX, Image as ImageIcon, Loader2, Sparkles, MessageSquare, MicIcon, Globe, Brain, ArrowDown } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion, AnimatePresence } from 'framer-motion'
+import * as webllm from "@mlc-ai/web-llm"
 
 type MessageType = {
   id: string
@@ -63,6 +64,84 @@ export default function ChatBot() {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const audioElementRef = useRef<HTMLAudioElement | null>(null)
   const isAutoRecordingRef = useRef(false)
+
+  // --- IMMERSION & WEBGPU STATE ---
+  const [useWebGPU, setUseWebGPU] = useState(false)
+  const [useCadence, setUseCadence] = useState(false)
+  const [useHum, setUseHum] = useState(false)
+  const [voiceRate, setVoiceRate] = useState(1.0)
+  const [voicePitch, setVoicePitch] = useState(1.0)
+  const [webGPUProgress, setWebGPUProgress] = useState(0)
+  const [webGPULoading, setWebGPULoading] = useState(false)
+  const [localEngine, setLocalEngine] = useState<any>(null)
+
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const humOscillatorRef = useRef<OscillatorNode | null>(null)
+  const humGainNodeRef = useRef<GainNode | null>(null)
+
+  const initAudio = () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+    }
+  }
+
+  const startHum = () => {
+    if (!useHum || !audioCtxRef.current || humOscillatorRef.current) return
+
+    initAudio()
+    const ctx = audioCtxRef.current
+    if (ctx.state === 'suspended') ctx.resume()
+
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(60, ctx.currentTime)
+    gain.gain.setValueAtTime(0.02, ctx.currentTime)
+
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start()
+
+    humOscillatorRef.current = osc
+    humGainNodeRef.current = gain
+  }
+
+  const stopHum = () => {
+    if (humOscillatorRef.current && humGainNodeRef.current && audioCtxRef.current) {
+      const ctx = audioCtxRef.current
+      humGainNodeRef.current.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1)
+      humOscillatorRef.current.stop(ctx.currentTime + 0.1)
+      humOscillatorRef.current = null
+      humGainNodeRef.current = null
+    }
+  }
+
+  const initWebGPUEngine = async () => {
+    if (localEngine) return
+    setWebGPULoading(true)
+    try {
+      const engine = await webllm.CreateMLCEngine("gemma-2b-it-q4f16_1-MLC", {
+        initProgressCallback: (report) => {
+          setWebGPUProgress(report.progress)
+        }
+      })
+      setLocalEngine(engine)
+      toast.success("Gemma WebGPU Loaded Successfully")
+    } catch (error) {
+      console.error("WebGPU Init Error:", error)
+      toast.error("Failed to load local model. Ensure WebGPU is enabled.")
+      setUseWebGPU(false)
+    } finally {
+      setWebGPULoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (useWebGPU && !localEngine) {
+      initWebGPUEngine()
+    }
+  }, [useWebGPU])
 
   useEffect(() => {
     setMounted(true)
@@ -205,7 +284,60 @@ export default function ChatBot() {
       audioElementRef.current.pause()
       audioElementRef.current = null
     }
+    window.speechSynthesis.cancel()
+    stopHum()
     setIsPlaying(null)
+  }
+
+  const cleanText = (text: string) => {
+    return text.replace(/\*\*/g, "").replace(/##/g, "").replace(/```[\s\S]*?```/g, "").replace(/`/g, "")
+  }
+
+  const speakWithCadence = (text: string, messageId: string) => {
+    window.speechSynthesis.cancel()
+    const clean = cleanText(text).replace(/\n/g, ". ")
+    const chunks = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [clean]
+
+    let queueIndex = 0
+    setIsPlaying(messageId)
+
+    const speakNextChunk = () => {
+      if (queueIndex >= chunks.length) {
+        setIsPlaying(null)
+        stopHum()
+        if (conversationMode && !isRecording) {
+          setTimeout(() => startRecording(true), 500)
+        }
+        return
+      }
+
+      let chunk = chunks[queueIndex].trim()
+      if (!chunk) { queueIndex++; speakNextChunk(); return }
+
+      const utterance = new SpeechSynthesisUtterance(chunk)
+      const browserVoices = window.speechSynthesis.getVoices()
+      // Try to match selectedVoice name if possible, else default
+      const voice = browserVoices.find(v => v.name === selectedVoice) || browserVoices[0]
+      if (voice) utterance.voice = voice
+
+      const rateVar = voiceRate * (0.9 + Math.random() * 0.2)
+      const pitchVar = voicePitch * (0.95 + Math.random() * 0.1)
+
+      utterance.rate = rateVar
+      utterance.pitch = pitchVar
+
+      utterance.onend = () => {
+        queueIndex++
+        setTimeout(speakNextChunk, 100)
+      }
+
+      utterance.onerror = () => { queueIndex++; speakNextChunk() }
+
+      window.speechSynthesis.speak(utterance)
+    }
+
+    startHum()
+    speakNextChunk()
   }
 
   const generateSpeech = async (text: string): Promise<string | null> => {
@@ -250,12 +382,12 @@ export default function ChatBot() {
 
     try {
       const isImageRequest = messageContent.toLowerCase().includes('image') ||
-                            messageContent.toLowerCase().includes('picture') ||
-                            messageContent.toLowerCase().includes('photo') ||
-                            messageContent.toLowerCase().includes('draw') ||
-                            messageContent.toLowerCase().includes('create') ||
-                            messageContent.toLowerCase().includes('generate') ||
-                            messageContent.toLowerCase().includes('make')
+        messageContent.toLowerCase().includes('picture') ||
+        messageContent.toLowerCase().includes('photo') ||
+        messageContent.toLowerCase().includes('draw') ||
+        messageContent.toLowerCase().includes('create') ||
+        messageContent.toLowerCase().includes('generate') ||
+        messageContent.toLowerCase().includes('make')
 
       let aiContent = ''
       let aiImage: string | undefined
@@ -280,18 +412,41 @@ export default function ChatBot() {
           aiContent = 'Error generating image. Please try again.'
         }
       } else {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: messageContent })
-        })
+        if (useWebGPU && localEngine) {
+          const messagesForGemma = [
+            { role: 'system', content: 'You are Project ROMAN. Identity: Ultra Secure Autonomous Command Agent.' }, // Brief system prompt for Gemma
+            ...messages.map(m => ({ role: m.role, content: m.content }))
+          ]
 
-        const data = await response.json()
-        aiContent = data.response || 'I apologize, but I could not generate a response.'
+          const chunks = await localEngine.chat.completions.create({
+            messages: messagesForGemma,
+            stream: true,
+            max_tokens: 300,
+            temperature: 0.7
+          })
 
-        const audioUrl = await generateSpeech(aiContent)
-        if (audioUrl) {
-          aiAudio = audioUrl
+          for await (const chunk of chunks) {
+            const delta = chunk.choices[0]?.delta?.content || ""
+            aiContent += delta
+            // We'll update the message in the finally block or via a streaming update if we had that set up.
+            // For now, let's just collect it.
+          }
+        } else {
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: messageContent })
+          })
+
+          const data = await response.json()
+          aiContent = data.response || 'I apologize, but I could not generate a response.'
+        }
+
+        if (!useCadence) {
+          const audioUrl = await generateSpeech(aiContent)
+          if (audioUrl) {
+            aiAudio = audioUrl
+          }
         }
       }
 
@@ -306,9 +461,13 @@ export default function ChatBot() {
 
       setMessages(prev => [...prev, assistantMessage])
 
-      if (autoPlayVoice && aiAudio && !isImageRequest) {
+      if (autoPlayVoice && !isImageRequest) {
         setTimeout(() => {
-          playAudio(aiAudio!, assistantMessage.id, true)
+          if (useCadence) {
+            speakWithCadence(aiContent, assistantMessage.id)
+          } else if (aiAudio) {
+            playAudio(aiAudio!, assistantMessage.id, true)
+          }
         }, 300)
       }
     } catch (error) {
@@ -353,6 +512,24 @@ export default function ChatBot() {
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 relative" suppressHydrationWarning>
       <FloatingShapes />
+
+      {webGPULoading && (
+        <div className="fixed top-0 left-0 right-0 z-[100] bg-white/80 backdrop-blur-md border-b">
+          <div className="container mx-auto px-4 py-2">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Gemma WebGPU Loading...</span>
+              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${webGPUProgress * 100}%` }}
+                />
+              </div>
+              <span className="text-xs font-bold text-purple-600">{Math.round(webGPUProgress * 100)}%</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="w-full h-full animate-gradient" style={{
@@ -437,6 +614,67 @@ export default function ChatBot() {
                   <span className={`text-xs font-medium ${autoPlayVoice ? 'text-green-600' : 'text-slate-400'}`}>
                     {autoPlayVoice ? 'Enabled' : 'Disabled'}
                   </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-8 w-px bg-slate-200 mx-2 hidden sm:block" />
+
+            {/* IMMERSION CONTROLS */}
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={useWebGPU ? "default" : "outline"}
+                  onClick={() => setUseWebGPU(!useWebGPU)}
+                  className={`rounded-xl px-4 ${useWebGPU ? 'bg-purple-600 hover:bg-purple-700' : ''}`}
+                >
+                  <Brain className="w-4 h-4 mr-2" />
+                  Gemma (Local)
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant={useCadence ? "default" : "outline"}
+                  onClick={() => setUseCadence(!useCadence)}
+                  className={`rounded-xl px-4 ${useCadence ? 'bg-pink-600 hover:bg-pink-700 text-white' : ''}`}
+                >
+                  🎭 Cadence
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant={useHum ? "default" : "outline"}
+                  onClick={() => {
+                    setUseHum(!useHum)
+                    initAudio()
+                  }}
+                  className={`rounded-xl px-4 ${useHum ? 'bg-cyan-600 hover:bg-cyan-700 text-white' : ''}`}
+                >
+                  🔊 Bio-Hum
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-4 bg-white/40 px-3 py-1.5 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2 min-w-[100px]">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Rate</span>
+                  <input
+                    type="range"
+                    min="0.5" max="2" step="0.1"
+                    value={voiceRate}
+                    onChange={(e) => setVoiceRate(parseFloat(e.target.value))}
+                    className="flex-1 accent-purple-500 h-1"
+                  />
+                </div>
+                <div className="flex items-center gap-2 min-w-[100px]">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Pitch</span>
+                  <input
+                    type="range"
+                    min="0.5" max="2" step="0.1"
+                    value={voicePitch}
+                    onChange={(e) => setVoicePitch(parseFloat(e.target.value))}
+                    className="flex-1 accent-pink-500 h-1"
+                  />
                 </div>
               </div>
             </div>
