@@ -123,6 +123,4 @@ This scaffold includes a comprehensive set of modern web development tools:
 - **Essential Hooks**: 100+ useful React hooks with ReactUse for common patterns
 
 
----
 
-Built with ❤️ for the developer community. Supercharged by [Z.ai](https://chat.z.ai) 🚀
